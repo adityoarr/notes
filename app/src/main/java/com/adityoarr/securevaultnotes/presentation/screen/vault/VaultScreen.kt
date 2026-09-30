@@ -1,5 +1,6 @@
 package com.adityoarr.securevaultnotes.presentation.screen.vault
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,15 +30,23 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.adityoarr.securevaultnotes.domain.model.Note
+import com.adityoarr.securevaultnotes.presentation.screen.share.SharePasswordDialog
+import com.adityoarr.securevaultnotes.presentation.viewmodel.ShareViewModel
 import com.adityoarr.securevaultnotes.presentation.viewmodel.VaultViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,6 +57,13 @@ fun VaultScreen(
     onEditNote: (Long) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val shareViewModel: ShareViewModel = hiltViewModel()
+    val context = LocalContext.current
+
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
+
+    val selectedNotes = uiState.notes.filter { it.id in uiState.selectedNoteIds }
 
     Scaffold(
         containerColor = Color.Black,
@@ -57,11 +74,13 @@ fun VaultScreen(
                 actions = {
                     if (uiState.isBulkMode) {
                         TextButton(
-                            onClick = { viewModel.deleteSelectedNotes() },
-                            enabled = uiState.selectedNoteIds.isNotEmpty()
-                        ) {
-                            Text("HAPUS", color = Color.Red, fontWeight = FontWeight.Bold)
-                        }
+                            onClick = { showShareDialog = true },
+                            enabled = selectedNotes.isNotEmpty()
+                        ) { Text("SHARE", color = Color.White, fontWeight = FontWeight.Bold) }
+                        TextButton(
+                            onClick = { showDeleteConfirm = true },
+                            enabled = selectedNotes.isNotEmpty()
+                        ) { Text("HAPUS", color = Color.Red, fontWeight = FontWeight.Bold) }
                         TextButton(onClick = { viewModel.toggleBulkMode() }) {
                             Text("BATAL", color = Color.Gray)
                         }
@@ -74,34 +93,18 @@ fun VaultScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddNote,
-                containerColor = Color.White,
-                contentColor = Color.Black
-            ) {
+            FloatingActionButton(onClick = onAddNote, containerColor = Color.White, contentColor = Color.Black) {
                 Icon(Icons.Default.Add, contentDescription = "Tambah catatan")
             }
         }
     ) { padding ->
         if (uiState.notes.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "Vault kosong.\nKetuk + untuk menambah catatan pertama.",
-                    color = Color.Gray,
-                    textAlign = TextAlign.Center
-                )
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text("Vault kosong.\nKetuk + untuk menambah catatan pertama.", color = Color.Gray, textAlign = TextAlign.Center)
             }
         } else {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .background(Color.Black),
+                modifier = Modifier.fillMaxSize().padding(padding).background(Color.Black),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -124,6 +127,51 @@ fun VaultScreen(
             }
         }
     }
+
+    // ===== DIALOG KONFIRMASI HAPUS =====
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            containerColor = Color(0xFF1A1A1A),
+            title = { Text("Hapus catatan?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "${selectedNotes.size} catatan terpilih akan dihapus PERMANEN dari vault, termasuk seluruh lampiran terenkripsinya. Tindakan ini tidak dapat dibatalkan.",
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    viewModel.deleteSelectedNotes()
+                }) { Text("HAPUS", color = Color.Red, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("BATAL", color = Color.Gray) }
+            }
+        )
+    }
+
+    // ===== DIALOG PASSWORD SHARE =====
+    if (showShareDialog) {
+        SharePasswordDialog(
+            shareViewModel = shareViewModel,
+            notes = selectedNotes,
+            onDismiss = { showShareDialog = false },
+            onFileReady = { file ->
+                showShareDialog = false
+                viewModel.toggleBulkMode()
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(send, "Kirim file Secure Vault"))
+            }
+        )
+    }
 }
 
 @Composable
@@ -134,37 +182,18 @@ private fun NoteCard(
     onLongClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) Color(0xFF333333) else Color(0xFF1A1A1A)
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = note.title,
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Text(note.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
-            Text(
-                text = note.description,
-                color = Color.Gray,
-                fontSize = 14.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+            Text(note.description, color = Color.Gray, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (note.attachments.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "${note.attachments.size} lampiran terenkripsi",
-                    color = Color.DarkGray,
-                    fontSize = 12.sp
-                )
+                Text("${note.attachments.size} lampiran terenkripsi", color = Color.DarkGray, fontSize = 12.sp)
             }
         }
     }

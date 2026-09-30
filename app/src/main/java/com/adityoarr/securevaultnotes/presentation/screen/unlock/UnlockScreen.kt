@@ -1,11 +1,31 @@
 package com.adityoarr.securevaultnotes.presentation.screen.unlock
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -19,113 +39,106 @@ import androidx.compose.ui.unit.sp
 import com.adityoarr.securevaultnotes.presentation.viewmodel.VaultViewModel
 
 @Composable
-fun UnlockScreen(
-    viewModel: VaultViewModel,
-    onUnlocked: () -> Unit
-) {
+fun UnlockScreen(viewModel: VaultViewModel, onUnlocked: () -> Unit) {
     val uiState by viewModel.uiState.collectAsState()
     var password by remember { mutableStateOf("") }
+    var showFirstTimeWarning by remember { mutableStateOf(false) }
 
-    // Trigger navigation saat berhasil unlock
     LaunchedEffect(uiState.isUnlocked) {
         if (uiState.isUnlocked) onUnlocked()
     }
 
-    Box(
+    LaunchedEffect(Unit) {
+        if (!uiState.vaultExists) showFirstTimeWarning = true
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
-        contentAlignment = Alignment.Center
+            .background(Color.Black)
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Column(
-            modifier = Modifier.padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Text(
+            text = "SECURE VAULT",
+            color = Color.White,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        Text("100% Offline • Zero Cloud • Zero Logs", color = Color.Gray, fontSize = 12.sp)
+        Spacer(Modifier.height(48.dp))
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password", color = Color.Gray) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                autoCorrectEnabled = false,
+                capitalization = KeyboardCapitalization.None
+            ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color.White,
+                unfocusedBorderColor = Color.DarkGray,
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = Color.White
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (uiState.unlockError != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(uiState.unlockError!!, color = Color.Red, fontSize = 13.sp)
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                if (password.isEmpty()) return@Button
+                val chars = password.toCharArray()
+                password = ""
+                if (uiState.vaultExists) viewModel.unlockVault(chars)
+                else viewModel.setupVault(chars)
+            },
+            enabled = !uiState.isLoading && password.isNotEmpty(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(8.dp)
         ) {
-            Text(
-                text = "SECURE VAULT",
-                color = Color.White,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 2.sp
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "100% Offline • Zero Cloud • Zero Logs",
-                color = Color.Gray,
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(48.dp))
-
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Masukkan Password", color = Color.Gray) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    autoCorrectEnabled = false,
-                    capitalization = KeyboardCapitalization.None
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color.White,
-                    unfocusedBorderColor = Color.DarkGray,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    cursorColor = Color.White
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(
-                onClick = {
-                    if (password.isNotEmpty()) {
-                        viewModel.unlockVault(password.toCharArray())
-                    }
-                },
-                enabled = !uiState.isLoading && password.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White,
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                if (uiState.isLoading) {
-                    CircularProgressIndicator(
-                        color = Color.Black,
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Text("BUKA VAULT", fontWeight = FontWeight.Bold)
-                }
+            if (uiState.isLoading) {
+                CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            } else {
+                Text(
+                    text = if (uiState.vaultExists) "BUKA VAULT" else "BUAT VAULT",
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
+    }
 
-        // First Time Warning Dialog
-        if (uiState.showFirstTimeWarning) {
-            FirstTimeWarningDialog(
-                onDismiss = { /* Hide dialog, lanjut ke setup */ }
-            )
-        }
+    if (showFirstTimeWarning) {
+        FirstTimeWarningDialog(onDismiss = { showFirstTimeWarning = false })
     }
 }
 
 @Composable
 fun FirstTimeWarningDialog(onDismiss: () -> Unit) {
     AlertDialog(
-        onDismissRequest = { /* Tidak bisa di-dismiss dengan klik luar */ },
+        onDismissRequest = { },
         containerColor = Color(0xFF1A1A1A),
-        titleContentColor = Color.Red,
-        textContentColor = Color.White,
         title = {
             Text(
                 "PERINGATAN KERAS",
+                color = Color.Red,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
@@ -135,8 +148,9 @@ fun FirstTimeWarningDialog(onDismiss: () -> Unit) {
             Text(
                 "TIDAK ADA FITUR LUPA PASSWORD.\n\n" +
                         "Data Anda dienkripsi dengan kunci yang hanya bisa diturunkan dari password ini. " +
-                        "Jika Anda melupakan password, DATA AKAN HILANG PERMANEN DAN TIDAK BISA DIPULIHKAN.\n\n" +
-                        "Aplikasi ini 100% Offline. Tidak ada server, tidak ada recovery, tidak ada backdoor.",
+                        "Jika password terlupakan, DATA HILANG PERMANEN DAN TIDAK BISA DIPULIHKAN.\n\n" +
+                        "Aplikasi ini 100% offline: tidak ada server, tidak ada recovery, tidak ada backdoor.",
+                color = Color.White,
                 fontSize = 14.sp
             )
         },

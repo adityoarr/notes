@@ -1,15 +1,32 @@
 package com.adityoarr.securevaultnotes.presentation.screen.editor
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -21,36 +38,50 @@ import com.adityoarr.securevaultnotes.presentation.viewmodel.VaultViewModel
 @Composable
 fun NoteEditorScreen(
     viewModel: VaultViewModel,
-    existingNote: Note?,
-    onNavigateBack: () -> Unit
+    noteId: Long?,
+    onBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    var title by remember { mutableStateOf(existingNote?.title ?: "") }
-    var description by remember { mutableStateOf(existingNote?.description ?: "") }
+    val existing = noteId?.let { viewModel.getNoteById(it) }
+
+    var title by remember(noteId) { mutableStateOf(existing?.title.orEmpty()) }
+    var description by remember(noteId) { mutableStateOf(existing?.description.orEmpty()) }
 
     Scaffold(
         containerColor = Color.Black,
         topBar = {
             TopAppBar(
-                title = { Text(if (existingNote == null) "Catatan Baru" else "Edit Catatan", color = Color.White) },
+                title = {
+                    Text(
+                        text = if (existing == null) "Catatan Baru" else "Edit Catatan",
+                        color = Color.White
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Kembali", tint = Color.White)
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Kembali",
+                            tint = Color.White
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
                 actions = {
                     TextButton(
                         onClick = {
-                            val note = Note(
-                                id = existingNote?.id ?: 0,
-                                title = title,
-                                description = description,
-                                createdAt = existingNote?.createdAt ?: System.currentTimeMillis(),
-                                updatedAt = System.currentTimeMillis()
+                            val now = System.currentTimeMillis()
+                            viewModel.saveNote(
+                                Note(
+                                    id = existing?.id ?: 0L,
+                                    title = title.trim(),
+                                    description = description,
+                                    attachments = existing?.attachments ?: emptyList(),
+                                    createdAt = existing?.createdAt ?: now,
+                                    updatedAt = now
+                                )
                             )
-                            viewModel.saveNote(note)
-                            onNavigateBack()
+                            onBack()
                         },
                         enabled = title.isNotBlank() && !uiState.isSaving
                     ) {
@@ -72,6 +103,7 @@ fun NoteEditorScreen(
                 value = title,
                 onValueChange = { title = it },
                 label = { Text("Judul", color = Color.Gray) },
+                singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Color.White,
                     unfocusedBorderColor = Color.DarkGray,
@@ -81,7 +113,7 @@ fun NoteEditorScreen(
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = description,
                 onValueChange = { description = it },
@@ -96,40 +128,6 @@ fun NoteEditorScreen(
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Section Attachment
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Lampiran (Terenkripsi)", color = Color.White)
-                IconButton(onClick = { /* Open File Picker */ }) {
-                    Icon(Icons.Default.AttachFile, "Tambah", tint = Color.White)
-                }
-            }
-
-            // Progress indicator saat enkripsi media besar
-            if (uiState.isEncryptingMedia) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text("Mengenkripsi media...", color = Color.Gray)
-                    }
-                }
-            }
         }
     }
 }

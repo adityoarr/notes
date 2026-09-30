@@ -1,21 +1,38 @@
 package com.adityoarr.securevaultnotes.presentation.screen.vault
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,7 +44,7 @@ import com.adityoarr.securevaultnotes.presentation.viewmodel.VaultViewModel
 fun VaultScreen(
     viewModel: VaultViewModel,
     onAddNote: () -> Unit,
-    onEditNote: (Note) -> Unit
+    onEditNote: (Long) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -35,28 +52,22 @@ fun VaultScreen(
         containerColor = Color.Black,
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        if (uiState.isDecoyVault) "Decoy Vault" else "My Vault",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
+                title = { Text("Notes", color = Color.White, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
                 actions = {
                     if (uiState.isBulkMode) {
-                        IconButton(onClick = { viewModel.toggleBulkMode() }) {
-                            Icon(Icons.Default.Close, "Batal", tint = Color.White)
+                        TextButton(
+                            onClick = { viewModel.deleteSelectedNotes() },
+                            enabled = uiState.selectedNoteIds.isNotEmpty()
+                        ) {
+                            Text("HAPUS", color = Color.Red, fontWeight = FontWeight.Bold)
                         }
-                        IconButton(onClick = { viewModel.deleteSelectedNotes() }) {
-                            Icon(Icons.Default.Delete, "Hapus", tint = Color.Red)
-                        }
-                        IconButton(onClick = { /* Bulk Share Logic */ }) {
-                            Icon(Icons.Default.Share, "Share", tint = Color.White)
+                        TextButton(onClick = { viewModel.toggleBulkMode() }) {
+                            Text("BATAL", color = Color.Gray)
                         }
                     } else {
-                        IconButton(onClick = { viewModel.toggleBulkMode() }) {
-                            Icon(Icons.Default.CheckCircle, "Pilih", tint = Color.White)
+                        TextButton(onClick = { viewModel.toggleBulkMode() }) {
+                            Text("PILIH", color = Color.White)
                         }
                     }
                 }
@@ -68,17 +79,22 @@ fun VaultScreen(
                 containerColor = Color.White,
                 contentColor = Color.Black
             ) {
-                Icon(Icons.Default.Add, "Tambah Catatan")
+                Icon(Icons.Default.Add, contentDescription = "Tambah catatan")
             }
         }
     ) { padding ->
-        if (uiState.isLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color.White)
-            }
-        } else if (uiState.notes.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Vault kosong.", color = Color.Gray)
+        if (uiState.notes.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Vault kosong.\nKetuk + untuk menambah catatan pertama.",
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center
+                )
             }
         } else {
             LazyColumn(
@@ -93,10 +109,9 @@ fun VaultScreen(
                     NoteCard(
                         note = note,
                         isSelected = note.id in uiState.selectedNoteIds,
-                        isBulkMode = uiState.isBulkMode,
                         onClick = {
                             if (uiState.isBulkMode) viewModel.toggleNoteSelection(note.id)
-                            else onEditNote(note)
+                            else onEditNote(note.id)
                         },
                         onLongClick = {
                             if (!uiState.isBulkMode) {
@@ -112,16 +127,16 @@ fun VaultScreen(
 }
 
 @Composable
-fun NoteCard(
+private fun NoteCard(
     note: Note,
     isSelected: Boolean,
-    isBulkMode: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) Color(0xFF333333) else Color(0xFF1A1A1A)
         )
@@ -135,7 +150,7 @@ fun NoteCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 text = note.description,
                 color = Color.Gray,
@@ -144,7 +159,7 @@ fun NoteCard(
                 overflow = TextOverflow.Ellipsis
             )
             if (note.attachments.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     text = "${note.attachments.size} lampiran terenkripsi",
                     color = Color.DarkGray,

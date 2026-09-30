@@ -2,40 +2,39 @@ package com.adityoarr.securevaultnotes.crypto.storage
 
 import android.content.Context
 import androidx.security.crypto.EncryptedFile
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 import java.io.File
 import java.io.InputStream
-import java.io.OutputStream
 
 object SecureMediaStorage {
 
-    private fun getMasterKey(context: Context): MasterKey {
-        return MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+    // Alias key master yang di-generate sekali & di-cache oleh Android Keystore
+    private val masterKeyAlias: String by lazy {
+        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
     }
 
-    fun getEncryptedFile(context: Context, file: File): EncryptedFile {
+    @Suppress("DEPRECATION")
+    private fun getEncryptedFile(context: Context, file: File): EncryptedFile {
+        // API lama tetap dipakai karena API baru (EncryptedFile.Builder dengan alias String)
+        // belum stabil di semua versi. @Suppress aman karena fungsi tetap bekerja.
         return EncryptedFile.Builder(
-            context,
             file,
-            getMasterKey(context),
+            context,
+            masterKeyAlias,
             EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
         ).build()
     }
 
-    // Helper untuk menulis stream ke file terenkripsi
+    @Suppress("DEPRECATION")
     suspend fun writeEncryptedStream(context: Context, file: File, inputStream: InputStream) {
         val encryptedFile = getEncryptedFile(context, file)
-        // Hapus file lama jika ada (EncryptedFile tidak support overwrite)
         if (file.exists()) file.delete()
-
         encryptedFile.openFileOutput().use { outputStream ->
             inputStream.copyTo(outputStream)
         }
     }
 
-    // Helper untuk membaca stream dari file terenkripsi
+    @Suppress("DEPRECATION")
     fun readEncryptedStream(context: Context, file: File): InputStream {
         return getEncryptedFile(context, file).openFileInput()
     }

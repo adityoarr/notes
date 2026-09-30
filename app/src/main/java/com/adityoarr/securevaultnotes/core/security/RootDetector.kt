@@ -25,15 +25,16 @@ class RootDetector @Inject constructor(
      */
     fun getRootDetectionDetails(): Map<String, Boolean> {
         return mapOf(
-            "dangerousApps" to rootBeer.detectDangerousApps(),
             "rootManagementApps" to rootBeer.detectRootManagementApps(),
             "potentiallyDangerousApps" to rootBeer.detectPotentiallyDangerousApps(),
             "testKeys" to rootBeer.detectTestKeys(),
             "busyBoxBinary" to rootBeer.checkForBusyBoxBinary(),
             "suBinary" to rootBeer.checkForSuBinary(),
-            "rootCloakingApps" to rootBeer.detectRootCloakingApps(),
-            "rwSystem" to rootBeer.checkForRWPaths(),
-            "magisk" to rootBeer.detectMagiskNativeBinary()
+            "dangerousProps" to rootBeer.checkForDangerousProps(),
+            "rwPaths" to rootBeer.checkForRWPaths(),
+            "suExists" to rootBeer.checkSuExists(),
+            "rootNative" to rootBeer.checkForRootNative(),
+            "magiskBinary" to rootBeer.checkForMagiskBinary()
         )
     }
 }

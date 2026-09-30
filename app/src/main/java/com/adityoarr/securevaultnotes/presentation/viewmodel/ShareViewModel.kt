@@ -7,6 +7,7 @@ import com.adityoarr.securevaultnotes.crypto.share.SecureVaultEngine
 import com.adityoarr.securevaultnotes.crypto.storage.SecureMediaStorage
 import com.adityoarr.securevaultnotes.data.repository.NoteRepository
 import com.adityoarr.securevaultnotes.domain.model.Note
+import com.adityoarr.securevaultnotes.domain.model.Attachment
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +18,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import org.json.JSONArray                                     // ← GANTI Json dengan org.json
+import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import javax.inject.Inject
 
@@ -31,9 +34,10 @@ data class ShareUiState(
 
 @HiltViewModel
 class ShareViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val noteRepository: NoteRepository
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+    var repository: NoteRepository? = null
 
     private val _uiState = MutableStateFlow(ShareUiState())
     val uiState: StateFlow<ShareUiState> = _uiState.asStateFlow()
@@ -48,7 +52,11 @@ class ShareViewModel @Inject constructor(
             try {
                 // 1. Siapkan manifest JSON
                 _uiState.update { it.copy(step = "Menyiapkan metadata...", progress = 0.2f) }
-                val notesJson = Json.encodeToString(notes)
+                val notesJson = JSONArray().apply {
+                    notes.forEach { note ->
+                        put(note.toJsonObject())
+                    }
+                }.toString()
 
                 // 2. Kumpulkan semua attachment (dekripsi dari EncryptedFile lokal)
                 _uiState.update { it.copy(step = "Mendekripsi lampiran...", progress = 0.4f) }
@@ -111,15 +119,20 @@ class ShareViewModel @Inject constructor(
                 _uiState.update { it.copy(step = "Mengekstrak data...", progress = 0.7f) }
 
                 val (manifestJson, attachments) = SecureVaultEngine.extractZipPayload(zipPayload)
-                val notes: List<Note> = Json.decodeFromString(manifestJson)
+                val notesArray = JSONArray(manifestJson)
+                val notes = (0 until notesArray.length()).map { i ->
+                    notesArray.getJSONObject(i).toNote()
+                }
 
                 // Simpan attachment ke EncryptedFile lokal
                 _uiState.update { it.copy(step = "Menyimpan lampiran terenkripsi...", progress = 0.85f) }
                 attachments.forEach { (fileName, bytes) ->
                     val targetFile = File(context.filesDir, "imported_${System.currentTimeMillis()}_$fileName")
-                    SecureMediaStorage.getEncryptedFile(context, targetFile).openFileOutput().use { out ->
-                        out.write(bytes)
-                    }
+                    SecureMediaStorage.writeEncryptedStream(
+                        context,
+                        targetFile,
+                        ByteArrayInputStream(bytes)
+                    )
                 }
 
                 withContext(Dispatchers.Main) {
@@ -144,3 +157,42 @@ class ShareViewModel @Inject constructor(
         _uiState.update { ShareUiState() }
     }
 }
+
+// Helper functions untuk JSON serialization
+private fun Note.toJsonObject(): JSONObject = JSONObject().apply {
+    put("id", id)
+    put("title", title)
+    put("description", description)
+    put("attachments", JSONArray().apply {
+        attachments.forEach { att -> put(att.toJsonObject()) }
+    })
+    put("createdAt", createdAt)
+    put("updatedAt", updatedAt)
+}
+
+private fun Attachment.toJsonObject(): JSONObject = JSONObject().apply {
+    put("id", id)
+    put("noteId", noteId)
+    put("filePath", filePath)
+    put("mimeType", mimeType)
+    put("createdAt", createdAt)
+}
+
+private fun JSONObject.toNote(): Note = Note(
+    id = getLong("id"),
+    title = getString("title"),
+    description = getString("description"),
+    attachments = (0 until getJSONArray("attachments").length()).map { i ->
+        getJSONArray("attachments").getJSONObject(i).toAttachment()
+    },
+    createdAt = getLong("createdAt"),
+    updatedAt = getLong("updatedAt")
+)
+
+private fun JSONObject.toAttachment(): Attachment = Attachment(
+    id = getLong("id"),
+    noteId = getLong("noteId"),
+    filePath = getString("filePath"),
+    mimeType = getString("mimeType"),
+    createdAt = getLong("createdAt")
+)

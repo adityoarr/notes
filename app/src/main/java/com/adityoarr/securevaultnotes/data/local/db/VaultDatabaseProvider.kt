@@ -22,11 +22,7 @@ class VaultDatabaseProvider @Inject constructor(
             "SecureVault-Decoy-Plausible-Deniability-0x01".toByteArray(Charsets.US_ASCII)
 
         init {
-            try {
-                System.loadLibrary("sqlcipher")
-            } catch (_: UnsatisfiedLinkError) {
-                // Library already loaded or not available
-            }
+            runCatching { System.loadLibrary("sqlcipher") }
         }
     }
 
@@ -42,10 +38,25 @@ class VaultDatabaseProvider @Inject constructor(
 
     fun vaultExists(): Boolean = context.getDatabasePath(REAL_DB_NAME).exists()
 
+    /**
+     * LOCK/LOGOUT: tutup database, kunci AES dibuang dari memori,
+     * status sesi decoy di-reset.
+     */
+    fun closeVault() {
+        closeCurrent()
+        isDecoySession = false
+    }
+
+    /**
+     * Mode UNLOCK: coba vault asli dengan key turunan password.
+     * Jika key salah, SQLCipher melempar exception saat query pertama
+     * lalu jatuh SENYAP ke decoy (tanpa error ke UI).
+     */
     suspend fun openVault(masterKey: ByteArray): AppDatabase = withContext(Dispatchers.IO) {
         closeCurrent()
 
-        tryOpen(REAL_DB_NAME, masterKey)?.let { real ->
+        val real = tryOpen(REAL_DB_NAME, masterKey)
+        if (real != null) {
             isDecoySession = false
             currentDb = real
             return@withContext real
@@ -57,10 +68,11 @@ class VaultDatabaseProvider @Inject constructor(
         decoy
     }
 
+    /** Mode SETUP (first launch): buat vault asli dengan key turunan password. */
     suspend fun createRealVault(masterKey: ByteArray): AppDatabase = withContext(Dispatchers.IO) {
         closeCurrent()
         val db = build(REAL_DB_NAME, masterKey, destructiveMigration = false)
-        db.openHelper.writableDatabase
+        db.openHelper.writableDatabase // trigger onCreate
         isDecoySession = false
         currentDb = db
         db
@@ -86,13 +98,18 @@ class VaultDatabaseProvider @Inject constructor(
         return db
     }
 
-    private fun build(name: String, key: ByteArray, destructiveMigration: Boolean): AppDatabase {
+    private fun build(
+        name: String,
+        key: ByteArray,
+        destructiveMigration: Boolean
+    ): AppDatabase {
         val factory: SupportSQLiteOpenHelper.Factory = SupportOpenHelperFactory(key)
         val builder = Room.databaseBuilder(context, AppDatabase::class.java, name)
             .openHelperFactory(factory)
         if (destructiveMigration) {
             builder.fallbackToDestructiveMigration(dropAllTables = true)
         }
+        // Vault ASLI tidak pernah destructive: migrasi harus eksplisit.
         return builder.build()
     }
 

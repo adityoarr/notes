@@ -8,7 +8,6 @@ import com.adityoarr.securevaultnotes.crypto.storage.SecureMediaStorage
 import com.adityoarr.securevaultnotes.data.local.db.VaultDatabaseProvider
 import com.adityoarr.securevaultnotes.data.local.entity.AttachmentEntity
 import com.adityoarr.securevaultnotes.data.local.entity.NoteEntity
-import com.adityoarr.securevaultnotes.domain.model.Note
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +30,8 @@ data class ShareUiState(
     val step: String = "",
     val error: String? = null,
     val readyFile: File? = null,
-    val importedCount: Int? = null
+    val importedCount: Int? = null,
+    val pendingImportFile: File? = null // ← PINDAH KE STATE
 )
 
 @HiltViewModel
@@ -43,8 +43,10 @@ class ShareViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ShareUiState())
     val uiState: StateFlow<ShareUiState> = _uiState.asStateFlow()
 
-    /** Di-set oleh MainActivity saat app dibuka via intent .securevault */
-    var pendingImportFile: File? = null
+    /** Set file pending import (dipanggil dari MainActivity) */
+    fun setPendingImportFile(file: File?) {
+        _uiState.update { it.copy(pendingImportFile = file) }
+    }
 
     fun consumeReadyFile() = _uiState.update { it.copy(readyFile = null) }
     fun consumeImportResult() = _uiState.update { it.copy(importedCount = null) }
@@ -52,7 +54,7 @@ class ShareViewModel @Inject constructor(
 
     // ================= EXPORT =================
 
-    fun exportSecureVault(notes: List<Note>, password: CharArray) {
+    fun exportSecureVault(notes: List<com.adityoarr.securevaultnotes.domain.model.Note>, password: CharArray) {
         _uiState.update { it.copy(isProcessing = true, progress = 0.1f, step = "Menyiapkan paket...", error = null) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -79,7 +81,10 @@ class ShareViewModel @Inject constructor(
         }
     }
 
-    private suspend fun buildManifest(notes: List<Note>, out: MutableMap<String, ByteArray>): String {
+    private suspend fun buildManifest(
+        notes: List<com.adityoarr.securevaultnotes.domain.model.Note>,
+        out: MutableMap<String, ByteArray>
+    ): String {
         val root = JSONObject()
         root.put("version", 1)
         root.put("exportedAt", System.currentTimeMillis())
@@ -114,16 +119,17 @@ class ShareViewModel @Inject constructor(
     // ================= IMPORT =================
 
     fun importSecureVault(password: CharArray) {
-        val file = pendingImportFile
+        val file = _uiState.value.pendingImportFile
         if (file == null || !file.exists()) {
             password.fill('\u0000')
-            _uiState.update { it.copy(error = "File tidak ditemukan.") }
+            _uiState.update { it.copy(error = "File tidak ditemukan. Coba pilih ulang file .securevault.") }
             return
         }
+
         _uiState.update { it.copy(isProcessing = true, progress = 0.2f, step = "Mendekripsi file...", error = null) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val zip = SecureVaultEngine.decryptSecureVaultFile(file, password) // wipe password di dalam
+                val zip = SecureVaultEngine.decryptSecureVaultFile(file, password)
                 _uiState.update { it.copy(progress = 0.6f, step = "Mengekstrak data...") }
                 val (manifest, attachments) = SecureVaultEngine.extractZipPayload(zip)
 
@@ -160,6 +166,10 @@ class ShareViewModel @Inject constructor(
                     }
                     count++
                 }
+
+                // Hapus file cache setelah sukses import
+                file.delete()
+                _uiState.update { it.copy(pendingImportFile = null) }
 
                 withContext(Dispatchers.Main) {
                     _uiState.update { it.copy(isProcessing = false, progress = 1f, importedCount = count) }

@@ -7,6 +7,8 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.content.IntentCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -27,7 +29,8 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    @Inject lateinit var rootDetector: RootDetector
+    @Inject
+    lateinit var rootDetector: RootDetector
 
     private val vaultViewModel: VaultViewModel by viewModels()
     private val shareViewModel: ShareViewModel by viewModels()
@@ -41,11 +44,14 @@ class MainActivity : ComponentActivity() {
         )
 
         val isRooted = rootDetector.isDeviceRooted()
-        shareViewModel.pendingImportFile = handleIncomingIntent(intent)
+
+        // Set pending import file ke StateFlow (instance activity-scoped)
+        shareViewModel.setPendingImportFile(handleIncomingIntent(intent))
 
         setContent {
             SecureVaultTheme {
                 val navController = rememberNavController()
+                val shareState by shareViewModel.uiState.collectAsState()
 
                 if (isRooted) {
                     RootWarningScreen(onProceed = { finishAffinity() })
@@ -55,7 +61,7 @@ class MainActivity : ComponentActivity() {
                             UnlockScreen(
                                 viewModel = vaultViewModel,
                                 onUnlocked = {
-                                    val target = if (shareViewModel.pendingImportFile != null) "incoming" else "vault"
+                                    val target = if (shareState.pendingImportFile != null) "incoming" else "vault"
                                     navController.navigate(target) {
                                         popUpTo("unlock") { inclusive = true }
                                     }
@@ -65,8 +71,17 @@ class MainActivity : ComponentActivity() {
                         composable("vault") {
                             VaultScreen(
                                 viewModel = vaultViewModel,
+                                shareViewModel = shareViewModel,
                                 onAddNote = { navController.navigate("editor/new") },
-                                onEditNote = { id -> navController.navigate("editor/$id") }
+                                onEditNote = { id -> navController.navigate("editor/$id") },
+                                onImport = { navController.navigate("incoming") },
+                                onLock = {
+                                    vaultViewModel.lockVault()
+                                    shareViewModel.setPendingImportFile(null)
+                                    navController.navigate("unlock") {
+                                        popUpTo(0) { inclusive = true }
+                                    }
+                                }
                             )
                         }
                         composable("editor/{noteId}") { entry ->
@@ -81,15 +96,15 @@ class MainActivity : ComponentActivity() {
                         composable("incoming") {
                             IncomingShareScreen(
                                 shareViewModel = shareViewModel,
-                                fileName = shareViewModel.pendingImportFile?.name ?: "file.securevault",
+                                fileName = shareState.pendingImportFile?.name ?: "file.securevault",
                                 onSuccess = {
-                                    shareViewModel.pendingImportFile = null
+                                    shareViewModel.setPendingImportFile(null)
                                     navController.navigate("vault") {
                                         popUpTo("unlock") { inclusive = true }
                                     }
                                 },
                                 onCancel = {
-                                    shareViewModel.pendingImportFile = null
+                                    shareViewModel.setPendingImportFile(null)
                                     navController.navigate("vault") {
                                         popUpTo("unlock") { inclusive = true }
                                     }
@@ -103,18 +118,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?): File? {
-        val uri: Uri = when (intent?.action) {
-            Intent.ACTION_VIEW -> intent.data
-            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-            else -> null
-        } ?: return null
+        val action = intent?.action ?: return null
+
+        // uri dideklarasikan NON-NULL: setiap cabang gagal langsung return null
+        val uri: Uri = when (action) {
+            Intent.ACTION_VIEW ->
+                intent.data ?: return null
+            Intent.ACTION_SEND ->
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?: return null
+            else -> return null
+        }
 
         return try {
             val dir = File(cacheDir, "incoming").apply { mkdirs() }
-            val rawName = uri.lastPathSegment?.substringAfterLast('/')?.take(60) ?: "incoming.securevault"
+            val rawName = (uri.lastPathSegment ?: "incoming.securevault")
+                .substringAfterLast('/')
+                .take(60)
             val target = File(dir, "${System.currentTimeMillis()}_$rawName")
-            contentResolver.openInputStream(uri)?.use { input ->
+
+            val copied = contentResolver.openInputStream(uri)?.use { input ->
                 target.outputStream().use { out -> input.copyTo(out) }
+            }
+            if (copied == null) {
+                target.delete()
+                return null
             }
             target
         } catch (_: Exception) {

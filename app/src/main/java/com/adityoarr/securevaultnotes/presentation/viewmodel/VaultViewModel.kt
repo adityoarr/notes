@@ -13,6 +13,7 @@ import com.adityoarr.securevaultnotes.domain.model.Note
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +33,7 @@ class VaultViewModel @Inject constructor(
     val uiState: StateFlow<VaultUiState> = _uiState.asStateFlow()
 
     private var repository: NoteRepository? = null
+    private var observeJob: Job? = null
 
     init {
         _uiState.update { it.copy(vaultExists = vaultDatabaseProvider.vaultExists()) }
@@ -48,8 +50,9 @@ class VaultViewModel @Inject constructor(
     }
 
     private fun observeNotes() {
+        observeJob?.cancel()
         val repo = repository ?: return
-        viewModelScope.launch {
+        observeJob = viewModelScope.launch {
             repo.observeNotes().collect { notes ->
                 _uiState.update { it.copy(notes = notes, isLoading = false) }
             }
@@ -85,7 +88,7 @@ class VaultViewModel @Inject constructor(
         }
     }
 
-    /** Unlock: password benar → vault asli; password salah → decoy (senyap). */
+    /** Unlock: password benar -> vault asli; password salah -> decoy (senyap). */
     fun unlockVault(password: CharArray) {
         _uiState.update { it.copy(isLoading = true, unlockError = null) }
         viewModelScope.launch(Dispatchers.IO) {
@@ -122,6 +125,15 @@ class VaultViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /** LOGOUT/LOCK: tutup DB, buang repository, batalkan observasi, reset UI ke unlock. */
+    fun lockVault() {
+        observeJob?.cancel()
+        observeJob = null
+        repository = null
+        vaultDatabaseProvider.closeVault()
+        _uiState.update { VaultUiState(vaultExists = vaultDatabaseProvider.vaultExists()) }
     }
 
     fun saveNote(note: Note) {

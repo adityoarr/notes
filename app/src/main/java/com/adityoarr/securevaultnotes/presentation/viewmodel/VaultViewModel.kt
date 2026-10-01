@@ -1,14 +1,17 @@
 package com.adityoarr.securevaultnotes.presentation.viewmodel
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.adityoarr.securevaultnotes.core.security.VaultSaltStore
 import com.adityoarr.securevaultnotes.crypto.kdf.Argon2Engine
 import com.adityoarr.securevaultnotes.data.local.db.AppDatabase
 import com.adityoarr.securevaultnotes.data.local.db.VaultDatabaseProvider
+import com.adityoarr.securevaultnotes.data.repository.AttachmentInput
 import com.adityoarr.securevaultnotes.data.repository.NoteRepository
 import com.adityoarr.securevaultnotes.data.repository.NoteRepositoryImpl
+import com.adityoarr.securevaultnotes.domain.model.Attachment
 import com.adityoarr.securevaultnotes.domain.model.Note
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -20,6 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -59,13 +64,12 @@ class VaultViewModel @Inject constructor(
         }
     }
 
-    /** First launch: buat vault asli dengan password user. */
     fun setupVault(password: CharArray) {
         _uiState.update { it.copy(isLoading = true, unlockError = null) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val salt = Argon2Engine.generateSalt()
-                saltStore.saveSalt(salt) // KRITIS: simpan salt agar vault bisa dibuka lagi
+                saltStore.saveSalt(salt)
                 val masterKey = Argon2Engine.deriveKey(password, salt)
                 password.fill('\u0000')
 
@@ -88,7 +92,6 @@ class VaultViewModel @Inject constructor(
         }
     }
 
-    /** Unlock: password benar -> vault asli; password salah -> decoy (senyap). */
     fun unlockVault(password: CharArray) {
         _uiState.update { it.copy(isLoading = true, unlockError = null) }
         viewModelScope.launch(Dispatchers.IO) {
@@ -127,21 +130,21 @@ class VaultViewModel @Inject constructor(
         }
     }
 
-    /** LOGOUT/LOCK: tutup DB, buang repository, batalkan observasi, reset UI ke unlock. */
     fun lockVault() {
         observeJob?.cancel()
         observeJob = null
         repository = null
         vaultDatabaseProvider.closeVault()
+        clearPlaybackFiles()
         _uiState.update { VaultUiState(vaultExists = vaultDatabaseProvider.vaultExists()) }
     }
 
-    fun saveNote(note: Note) {
+    fun saveNote(note: Note, newAttachments: List<AttachmentInput>) {
         val repo = repository ?: return
         _uiState.update { it.copy(isSaving = true) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                repo.saveNote(note, emptyList())
+                repo.saveNote(note, newAttachments)
                 withContext(Dispatchers.Main) {
                     _uiState.update { it.copy(isSaving = false) }
                 }
@@ -171,6 +174,99 @@ class VaultViewModel @Inject constructor(
                     _uiState.update { it.copy(isDeleting = false, unlockError = "Gagal menghapus: ${e.message}") }
                 }
             }
+        }
+    }
+
+    fun deleteAttachment(attachment: Attachment) {
+        val repo = repository ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repo.deleteAttachment(attachment)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Dekripsi lampiran tersimpan ke memori (untuk preview gambar). */
+    fun loadAttachmentBytes(attachment: Attachment, onLoaded: (ByteArray?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val bytes = try {
+                repository?.openAttachmentDecrypted(attachment)
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main) { onLoaded(bytes) }
+        }
+    }
+
+    /** Baca byte dari Uri mentah (untuk preview lampiran baru sebelum disimpan). */
+    fun loadBytesFromUri(uri: Uri, onLoaded: (ByteArray?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val bytes = try {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main) { onLoaded(bytes) }
+        }
+    }
+
+    /** Dekripsi lampiran audio/video tersimpan ke file cache sementara untuk playback. */
+    fun preparePlaybackFile(attachment: Attachment, onReady: (File?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = try {
+                val bytes = repository?.openAttachmentDecrypted(attachment)
+                if (bytes == null) null else writePlaybackFile(bytes, attachment.mimeType)
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main) { onReady(result) }
+        }
+    }
+
+    /** Salin Uri mentah ke file cache sementara untuk playback pratinjau sebelum save. */
+    fun preparePlaybackFileFromUri(uri: Uri, mimeType: String, onReady: (File?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null) null else writePlaybackFile(bytes, mimeType)
+            } catch (_: Exception) {
+                null
+            }
+            withContext(Dispatchers.Main) { onReady(result) }
+        }
+    }
+
+    private fun writePlaybackFile(bytes: ByteArray, mimeType: String): File {
+        val dir = File(context.cacheDir, "playback").apply { mkdirs() }
+        val f = File(dir, "${UUID.randomUUID()}.${extFor(mimeType)}")
+        f.writeBytes(bytes)
+        bytes.fill(0)
+        return f
+    }
+
+    private fun extFor(mimeType: String): String = when {
+        mimeType.startsWith("audio") -> when {
+            mimeType.contains("mp4") -> "m4a"
+            mimeType.contains("mpeg") -> "mp3"
+            mimeType.contains("ogg") -> "ogg"
+            mimeType.contains("wav") -> "wav"
+            else -> "tmp"
+        }
+        mimeType.startsWith("video") -> when {
+            mimeType.contains("webm") -> "webm"
+            mimeType.contains("3gpp") -> "3gp"
+            mimeType.contains("matroska") -> "mkv"
+            mimeType.contains("mpeg") -> "mpg"
+            else -> "mp4"
+        }
+        else -> "tmp"
+    }
+
+    /** Hapus seluruh file playback sementara (dipanggil saat viewer tutup & saat lock). */
+    fun clearPlaybackFiles() {
+        viewModelScope.launch(Dispatchers.IO) {
+            File(context.cacheDir, "playback").deleteRecursively()
         }
     }
 
